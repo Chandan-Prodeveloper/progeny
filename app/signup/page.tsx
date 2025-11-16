@@ -106,3 +106,29 @@ const [formData, setFormData] = useState({
       setIsLoading(false)
       return
     }
+
+    const supabase = createClient()
+
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo: process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/dashboard`,
+          data: {
+            full_name: formData.fullName,
+            phone_number: formData.phone,
+          },
+        },
+      })
+
+      if (error) throw error
+
+      router.push("/auth/signup-success")
+    } catch (error: any) {
+      console.error("[v0] Sign up error:", error)
+      setError(error.message || "An error occurred during sign up")
+    } finally {
+      setIsLoading(false)
+    }
+  }
