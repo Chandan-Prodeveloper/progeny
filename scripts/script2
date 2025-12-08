@@ -1,0 +1,453 @@
+-- =============================================
+-- COMPLETE SUPABASE ADMIN USER FIX
+-- This script fixes admin detection and profile fetching issues
+-- =============================================
+
+BEGIN;
+
+-- =============================================
+-- 1. DROP ALL EXISTING POLICIES FIRST
+-- =============================================
+
+-- Drop all existing policies to start fresh
+DROP POLICY IF EXISTS "profiles_own_access" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_admin_access" ON public.profiles;
+DROP POLICY IF EXISTS "scans_own_access" ON public.scans;
+DROP POLICY IF EXISTS "scans_admin_access" ON public.scans;
+DROP POLICY IF EXISTS "daily_usage_own_access" ON public.daily_usage;
+DROP POLICY IF EXISTS "daily_usage_admin_access" ON public.daily_usage;
+DROP POLICY IF EXISTS "subscriptions_own_access" ON public.subscriptions;
+DROP POLICY IF EXISTS "subscriptions_admin_access" ON public.subscriptions;
+
+-- =============================================
+-- 2. CREATE SECURITY DEFINER FUNCTIONS FOR ADMIN CHECK
+-- =============================================
+
+-- Function to check if current user is admin (SECURITY DEFINER)
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    user_admin boolean := false;
+    admin_emails text[] := ARRAY[
+        'ramrakhyanidarshan@gmail.com',
+        'arorachandan2004@gmail.com',
+        '22cs93@ecajmer.ac.in',
+        'parthdadhich15augast@gmail.com'
+    ];
+BEGIN
+    -- First check if user exists in profiles tablea
+    SELECT COALESCE(is_admin, false) INTO user_admin
+    FROM public.profiles
+    WHERE id = auth.uid();
+    
+    -- If user not found in profiles, check if they're admin by email
+    IF NOT FOUND THEN
+        SELECT (email = ANY(admin_emails)) INTO user_admin
+        FROM auth.users
+        WHERE id = auth.uid();
+        
+        -- Create profile for admin user if they don't exist
+        IF user_admin THEN
+            INSERT INTO public.profiles (id, email, full_name, is_admin, created_at, updated_at)
+            SELECT 
+                id,
+                email,
+                COALESCE(raw_user_meta_data->>'full_name', 'Admin User'),
+                true,
+                NOW(),
+                NOW()
+            FROM auth.users
+            WHERE id = auth.uid()
+            ON CONFLICT (id) DO UPDATE SET
+                is_admin = true,
+                updated_at = NOW();
+        END IF;
+    END IF;
+    
+    RETURN COALESCE(user_admin, false);
+END;
+$$;
+
+-- Function to ensure user profile exists
+CREATE OR REPLACE FUNCTION public.ensure_user_profile()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    admin_emails text[] := ARRAY[
+        'ramrakhyanidarshan@gmail.com',
+        'arorachandan2004@gmail.com',
+        '22cs93@ecajmer.ac.in',
+        'parthdadhich15augast@gmail.com'
+    ];
+BEGIN
+    -- Insert or update profile for current user
+    INSERT INTO public.profiles (id, email, full_name, is_admin, created_at, updated_at)
+    SELECT 
+        u.id,
+        u.email,
+        COALESCE(u.raw_user_meta_data->>'full_name', 'User'),
+        (u.email = ANY(admin_emails)),
+        NOW(),
+        NOW()
+    FROM auth.users u
+    WHERE u.id = auth.uid()
+    ON CONFLICT (id) DO UPDATE SET
+        email = EXCLUDED.email,
+        is_admin = EXCLUDED.is_admin,
+        updated_at = NOW();
+        
+    -- Ensure daily usage record exists
+    INSERT INTO public.daily_usage (user_id, date, scans_used, created_at, updated_at)
+    VALUES (auth.uid(), CURRENT_DATE, 0, NOW(), NOW())
+    ON CONFLICT (user_id, date) DO NOTHING;
+END;
+$$;
+
+-- =============================================
+-- 3. CREATE NEW SIMPLIFIED RLS POLICIES
+-- =============================================
+
+-- Profiles policies - Allow all authenticated users to read their own profile
+-- Admins can read all profiles
+CREATE POLICY "profiles_select_policy" ON public.profiles
+    FOR SELECT USING (
+        auth.uid() = id OR public.is_admin()
+    );
+
+CREATE POLICY "profiles_insert_policy" ON public.profiles
+    FOR INSERT WITH CHECK (
+        auth.uid() = id
+    );
+
+CREATE POLICY "profiles_update_policy" ON public.profiles
+    FOR UPDATE USING (
+        auth.uid() = id OR public.is_admin()
+    ) WITH CHECK (
+        auth.uid() = id OR public.is_admin()
+    );
+
+CREATE POLICY "profiles_delete_policy" ON public.profiles
+    FOR DELETE USING (
+        auth.uid() = id OR public.is_admin()
+    );
+
+-- Scans policies
+CREATE POLICY "scans_select_policy" ON public.scans
+    FOR SELECT USING (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+CREATE POLICY "scans_insert_policy" ON public.scans
+    FOR INSERT WITH CHECK (
+        auth.uid() = user_id
+    );
+
+CREATE POLICY "scans_update_policy" ON public.scans
+    FOR UPDATE USING (
+        auth.uid() = user_id OR public.is_admin()
+    ) WITH CHECK (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+CREATE POLICY "scans_delete_policy" ON public.scans
+    FOR DELETE USING (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+-- Daily usage policies
+CREATE POLICY "daily_usage_select_policy" ON public.daily_usage
+    FOR SELECT USING (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+CREATE POLICY "daily_usage_insert_policy" ON public.daily_usage
+    FOR INSERT WITH CHECK (
+        auth.uid() = user_id
+    );
+
+CREATE POLICY "daily_usage_update_policy" ON public.daily_usage
+    FOR UPDATE USING (
+        auth.uid() = user_id OR public.is_admin()
+    ) WITH CHECK (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+-- Subscriptions policies
+CREATE POLICY "subscriptions_select_policy" ON public.subscriptions
+    FOR SELECT USING (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+CREATE POLICY "subscriptions_insert_policy" ON public.subscriptions
+    FOR INSERT WITH CHECK (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+CREATE POLICY "subscriptions_update_policy" ON public.subscriptions
+    FOR UPDATE USING (
+        auth.uid() = user_id OR public.is_admin()
+    ) WITH CHECK (
+        auth.uid() = user_id OR public.is_admin()
+    );
+
+-- =============================================
+-- 4. UPDATE EXISTING FUNCTIONS
+-- =============================================
+
+-- Updated handle_new_user function
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  admin_emails text[] := ARRAY[
+    'ramrakhyanidarshan@gmail.com',
+    'arorachandan2004@gmail.com',
+    '22cs93@ecajmer.ac.in',
+    'parthdadhich15augast@gmail.com'
+  ];
+BEGIN
+  -- Insert profile with proper admin detection
+  INSERT INTO public.profiles (id, full_name, email, phone_number, is_admin, created_at, updated_at)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data ->> 'full_name', 'User'),
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data ->> 'phone_number', ''),
+    (NEW.email = ANY(admin_emails)),
+    NOW(),
+    NOW()
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    is_admin = EXCLUDED.is_admin,
+    updated_at = NOW();
+
+  -- Create initial daily usage record
+  INSERT INTO public.daily_usage (user_id, date, scans_used, created_at, updated_at)
+  VALUES (NEW.id, CURRENT_DATE, 0, NOW(), NOW())
+  ON CONFLICT (user_id, date) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Updated can_user_scan function
+CREATE OR REPLACE FUNCTION public.can_user_scan(user_uuid uuid DEFAULT auth.uid())
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    user_is_admin boolean := false;
+    user_has_active_subscription boolean := false;
+    daily_scans_used integer := 0;
+    subscription_scans integer := 0;
+    max_daily_scans integer := 5;
+BEGIN
+    -- Ensure user profile exists first
+    PERFORM public.ensure_user_profile();
+    
+    -- Get user admin status using the is_admin function
+    user_is_admin := public.is_admin();
+    
+    -- Admins have unlimited scans
+    IF user_is_admin THEN
+        RETURN true;
+    END IF;
+    
+    -- Check for active subscription with remaining scans
+    SELECT 
+        EXISTS(
+            SELECT 1 FROM public.subscriptions 
+            WHERE user_id = user_uuid 
+            AND status = 'active' 
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND scans_remaining > 0
+        ),
+        COALESCE(
+            (SELECT scans_remaining FROM public.subscriptions 
+             WHERE user_id = user_uuid 
+             AND status = 'active' 
+             AND (expires_at IS NULL OR expires_at > NOW())
+             ORDER BY created_at DESC 
+             LIMIT 1), 
+            0
+        )
+    INTO user_has_active_subscription, subscription_scans;
+    
+    -- If user has subscription scans, allow scan
+    IF user_has_active_subscription AND subscription_scans > 0 THEN
+        RETURN true;
+    END IF;
+    
+    -- Check daily usage for free users
+    SELECT COALESCE(scans_used, 0) INTO daily_scans_used
+    FROM public.daily_usage
+    WHERE user_id = user_uuid AND date = CURRENT_DATE;
+    
+    -- Allow scan if under daily limit
+    RETURN daily_scans_used < max_daily_scans;
+END;
+$$;
+
+-- Updated get_user_scan_status function
+CREATE OR REPLACE FUNCTION public.get_user_scan_status(user_uuid uuid DEFAULT auth.uid())
+RETURNS TABLE(
+    can_scan boolean,
+    is_admin boolean,
+    daily_scans_used integer,
+    daily_scans_limit integer,
+    subscription_scans integer,
+    has_active_subscription boolean,
+    profile_exists boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    -- Ensure user profile exists
+    PERFORM public.ensure_user_profile();
+    
+    RETURN QUERY
+    SELECT 
+        public.can_user_scan(user_uuid) as can_scan,
+        public.is_admin() as is_admin,
+        COALESCE(du.scans_used, 0) as daily_scans_used,
+        5 as daily_scans_limit,
+        COALESCE(s.scans_remaining, 0) as subscription_scans,
+        COALESCE(
+            (s.status = 'active' AND (s.expires_at IS NULL OR s.expires_at > NOW())), 
+            false
+        ) as has_active_subscription,
+        EXISTS(SELECT 1 FROM public.profiles WHERE id = user_uuid) as profile_exists
+    FROM public.profiles p
+    LEFT JOIN public.daily_usage du ON (du.user_id = p.id AND du.date = CURRENT_DATE)
+    LEFT JOIN public.subscriptions s ON (s.user_id = p.id AND s.status = 'active' AND (s.expires_at IS NULL OR s.expires_at > NOW()))
+    WHERE p.id = user_uuid;
+END;
+$$;
+
+-- =============================================
+-- 5. CREATE ADMIN MANAGEMENT FUNCTIONS
+-- =============================================
+
+-- Function to get user profile (with auto-creation for admins)
+CREATE OR REPLACE FUNCTION public.get_user_profile(user_uuid uuid DEFAULT auth.uid())
+RETURNS TABLE(
+    id uuid,
+    full_name text,
+    email text,
+    phone_number text,
+    is_admin boolean,
+    created_at timestamptz,
+    updated_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    -- Ensure profile exists
+    PERFORM public.ensure_user_profile();
+    
+    RETURN QUERY
+    SELECT 
+        p.id,
+        p.full_name,
+        p.email,
+        p.phone_number,
+        p.is_admin,
+        p.created_at,
+        p.updated_at
+    FROM public.profiles p
+    WHERE p.id = user_uuid;
+END;
+$$;
+
+-- =============================================
+-- 6. ENSURE ALL ADMIN USERS EXIST
+-- =============================================
+
+-- Create/update admin profiles
+DO $$
+DECLARE
+    admin_emails text[] := ARRAY[
+        'ramrakhyanidarshan@gmail.com',
+        'arorachandan2004@gmail.com',
+        '22cs93@ecajmer.ac.in',
+        'parthdadhich15augast@gmail.com'
+    ];
+    admin_email text;
+BEGIN
+    FOREACH admin_email IN ARRAY admin_emails
+    LOOP
+        -- Update existing profiles to admin
+        UPDATE public.profiles 
+        SET is_admin = true, updated_at = NOW()
+        WHERE email = admin_email;
+        
+        -- Create profiles for admin users if they exist in auth but not in profiles
+        INSERT INTO public.profiles (id, email, full_name, is_admin, created_at, updated_at)
+        SELECT 
+            u.id,
+            u.email,
+            COALESCE(u.raw_user_meta_data->>'full_name', 
+                CASE u.email
+                    WHEN 'ramrakhyanidarshan@gmail.com' THEN 'Darshan Ramrakhyani'
+                    WHEN 'arorachandan2004@gmail.com' THEN 'Chandan Arora'
+                    WHEN '22cs93@ecajmer.ac.in' THEN 'Rachit Tripathi'
+                    WHEN 'parthdadhich15augast@gmail.com' THEN 'Parth Tripathi'
+                    ELSE 'Admin User'
+                END
+            ),
+            true,
+            NOW(),
+            NOW()
+        FROM auth.users u
+        WHERE u.email = admin_email
+        ON CONFLICT (id) DO UPDATE SET
+            is_admin = true,
+            email = EXCLUDED.email,
+            updated_at = NOW();
+    END LOOP;
+END $$;
+
+COMMIT;
+
+-- =============================================
+-- 7. VERIFICATION QUERIES
+-- =============================================
+
+-- Test admin detection
+SELECT 
+    'Admin Users Check' as test_name,
+    email,
+    full_name,
+    is_admin,
+    created_at
+FROM public.profiles 
+WHERE is_admin = true 
+ORDER BY email;
+
+-- Test user profile function
+SELECT 
+    'Profile Function Test' as test_name,
+    *
+FROM public.get_user_profile() 
+LIMIT 1;
+
+-- Test scan status function
+SELECT 
+    'Scan Status Test' as test_name,
+    *
+FROM public.get_user_scan_status() 
+LIMIT 1;

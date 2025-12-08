@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Large files - do not commit
+models/*.h5
+public/assets/*.mp4
+*.lnk
+
+# Environment files
+.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+
+# Other
+.DS_Store
+*.log
