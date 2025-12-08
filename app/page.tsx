@@ -87,7 +87,7 @@ export default function HomePage() {
   playsInline
   preload="auto"
 >
-  <source src="/assets/video.mp4" type="video/mp4" />
+  <source src="https://res.cloudinary.com/di1vsejom/video/upload/v1765223807/video_lumpkf.mp4" />
   Your browser does not support the video tag.
 </video>
   </div>
