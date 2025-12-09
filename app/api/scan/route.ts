@@ -4,11 +4,8 @@ import { type NextRequest, NextResponse } from "next/server"
 // Function to call external Python ML service
 async function callMLService(imageBuffer: Buffer, cropType: string) {
   const formData = new FormData()
-  //const blob = new Blob([imageBuffer], { type: 'image/jpeg' })
-  //formData.append('image', blob, 'image.jpg')
-  const file = new File([imageBuffer], "image.jpg", { type: "image/jpeg" })
-formData.append("image", file)
-  
+  const blob = new Blob([imageBuffer], { type: 'image/jpeg' })
+  formData.append('image', blob, 'image.jpg')
   formData.append('crop_type', cropType)
   
   const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:5000'
