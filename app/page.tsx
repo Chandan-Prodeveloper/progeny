@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-
+import VideoModal from "@/components/VideoModal"
 import Link from "next/link"
 
 export default function HomePage() {
@@ -62,9 +62,7 @@ export default function HomePage() {
                 <Button size="lg" className="bg-accent hover:bg-accent/90 text-lg px-8" asChild>
                   <Link href="/auth/signup">Start Free Trial</Link>
                 </Button>
-                <Button variant="outline" size="lg" className="text-lg px-8 bg-transparent">
-                  Watch Demo
-                </Button>
+<VideoModal />
               </div>
               <div className="flex items-center gap-6 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
